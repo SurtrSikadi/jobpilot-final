@@ -1,0 +1,41 @@
+# JobPilot - Smart Job Matcher
+
+JobPilot is a runnable BAX-423 final project prototype. It starts from the professor-recommended Techmap/Kaggle job-posting dump, extracts a real 20,000-posting multi-country sample across many fields, simulates streaming/deduplicated storage, embeds user profiles and jobs into dense vectors, retrieves relevant roles within the user's preferred countries, re-ranks them with preferences and dealbreakers, learns from accept/reject/skip feedback, explains recommendations, exports top jobs, and generates a tailored resume draft.
+
+## Run Locally
+
+```bash
+cd code
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+The app expects `../data/job_postings_sample.csv`. The included snapshot has 20,000 real postings extracted from `techmap-jobs-dump-2021-09.json.zip`, with country fields for location-aware recommendation.
+
+## Rebuild the Data Sample
+
+If the Kaggle zip is available at `C:\Users\Rui Wang\Downloads\techmap-jobs-dump-2021-09.json.zip`, rebuild the sample with:
+
+```bash
+cd code
+python kaggle_ingest.py
+```
+
+The script streams the zip without extracting the full 50GB JSON file, samples across multiple countries and fields, normalizes schema.org job fields, infers missing salary/company-size metadata for ranking, and writes `../data/job_postings_sample.csv`.
+
+## Submission Contents
+
+- `code/`: Streamlit app and recommendation engine.
+- `data/`: Offline job-posting sample and generated SQLite stream store.
+- `brief.pdf`: Four-page technical brief.
+- `prompts.md`: Key AI prompts and how outputs were adapted.
+
+## Deployment
+
+Streamlit Cloud is the simplest hosting option:
+
+1. Push this folder to GitHub.
+2. Create a Streamlit Cloud app with entrypoint `code/app.py`.
+3. Confirm the app can read `data/job_postings_sample.csv`.
+
+For Google Cloud, deploy the Streamlit app to Cloud Run using the same requirements file, then add a scheduled Adzuna/JSearch fetcher feeding Pub/Sub for current postings.
