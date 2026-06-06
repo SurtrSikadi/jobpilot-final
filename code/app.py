@@ -11,12 +11,12 @@ from jobpilot_core import (
     Profile,
     analytics,
     benchmark,
+    ensure_sqlite_store,
     explain_job,
     fit_embeddings,
-    load_jobs,
+    load_jobs_from_sqlite,
     persona_pass_table,
     rank_jobs,
-    stream_to_sqlite,
     tailored_resume,
     update_feedback_weights,
 )
@@ -94,7 +94,8 @@ def inject_styles():
 
 @st.cache_data(show_spinner=False)
 def cached_jobs():
-    return load_jobs(DATA_PATH)
+    ensure_sqlite_store(DATA_PATH, DB_PATH)
+    return load_jobs_from_sqlite(DB_PATH)
 
 
 @st.cache_resource(show_spinner=False)
@@ -226,10 +227,11 @@ def main():
 
     with tabs[2]:
         st.subheader("Streaming Ingestion Simulation")
-        st.write("This button replays the offline snapshot into SQLite in batches, deduplicating by `job_id` as a stand-in for a real Pub/Sub or Kafka stream.")
-        if st.button("Run stream replay"):
-            result = stream_to_sqlite(DATA_PATH, DB_PATH)
-            st.success(f"Inserted {result['inserted']} records, skipped {result['duplicates']} duplicates, stored {result['stored']} total.")
+        st.write("On startup, JobPilot replays the offline Kaggle snapshot into SQLite in batches, deduplicating by `job_id`, then reads recommendations from that structured store.")
+        if st.button("Refresh SQLite store"):
+            cached_jobs.clear()
+            result = ensure_sqlite_store(DATA_PATH, DB_PATH)
+            st.success(f"SQLite store {result['mode']}: inserted {result['inserted']}, skipped {result['duplicates']}, stored {result['stored']} total.")
         st.code("python -m jobpilot_core  # core module used by Streamlit app", language="bash")
         st.write("Production path: replace CSV replay with Adzuna/JSearch fetcher, publish records to Pub/Sub, and keep the same dedup/store/rank boundary.")
 

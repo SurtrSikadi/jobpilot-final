@@ -1,6 +1,6 @@
 # JobPilot - Smart Job Matcher
 
-JobPilot is a runnable BAX-423 final project prototype. It starts from the professor-recommended Techmap/Kaggle job-posting dump, extracts a real 20,000-posting multi-country sample across many fields, simulates streaming/deduplicated storage, embeds user profiles and jobs into dense vectors, retrieves relevant roles within the user's preferred countries, re-ranks them with preferences and dealbreakers, learns from accept/reject/skip feedback, explains recommendations, exports top jobs, and generates a tailored resume draft.
+JobPilot is a runnable BAX-423 final project prototype. It starts from the professor-recommended Techmap/Kaggle job-posting dump, extracts a real 27,423-posting multi-country sample across many fields, ingests it into SQLite with deduplication, embeds user profiles and jobs into dense vectors, retrieves relevant roles within the user's preferred countries, re-ranks them with preferences and dealbreakers, learns from accept/reject/skip feedback, explains recommendations, exports top jobs, and generates a tailored resume draft.
 
 ## Run Locally
 
@@ -10,7 +10,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-The app expects `../data/job_postings_sample.csv`. The included snapshot has 20,000 real postings extracted from `techmap-jobs-dump-2021-09.json.zip`, with country fields for location-aware recommendation.
+The app expects `../data/job_postings_sample.csv`. The included snapshot has 27,423 real postings extracted from `techmap-jobs-dump-2021-09.json.zip`, with country fields for location-aware recommendation. On startup, the app replays this snapshot into SQLite and reads recommendations from that structured store.
 
 ## Rebuild the Data Sample
 

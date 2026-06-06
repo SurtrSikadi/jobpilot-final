@@ -317,6 +317,10 @@ def max_years_required(text: str) -> int:
 
 def load_jobs(csv_path: str | Path) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
+    return prepare_jobs(df)
+
+
+def prepare_jobs(df: pd.DataFrame) -> pd.DataFrame:
     if "country" not in df.columns:
         df["country"] = df["location"].fillna("").apply(lambda loc: normalize_country(str(loc).split(",")[-1]))
     df["country"] = df["country"].fillna("").apply(normalize_country)
@@ -618,6 +622,41 @@ def stream_to_sqlite(csv_path: str | Path, db_path: str | Path, batch_size: int 
     total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
     conn.close()
     return {"inserted": inserted, "duplicates": duplicates, "stored": total}
+
+
+def ensure_sqlite_store(csv_path: str | Path, db_path: str | Path) -> dict[str, int | str]:
+    csv_path = Path(csv_path)
+    db_path = Path(db_path)
+    expected = sum(1 for _ in csv_path.open("r", encoding="utf-8", errors="ignore")) - 1
+    needs_rebuild = not db_path.exists()
+    if not needs_rebuild:
+        try:
+            conn = sqlite3.connect(db_path)
+            row = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()
+            existing = int(row[0]) if row else 0
+            conn.close()
+            needs_rebuild = existing != expected
+        except sqlite3.Error:
+            needs_rebuild = True
+
+    if needs_rebuild:
+        if db_path.exists():
+            db_path.unlink()
+        result = stream_to_sqlite(csv_path, db_path)
+        result["mode"] = "rebuilt"
+        return result
+
+    return {"inserted": 0, "duplicates": 0, "stored": expected, "mode": "existing"}
+
+
+def load_jobs_from_sqlite(db_path: str | Path) -> pd.DataFrame:
+    conn = sqlite3.connect(db_path)
+    df = pd.read_sql_query("SELECT * FROM jobs", conn)
+    conn.close()
+    for col in ["remote", "sponsors_visa"]:
+        if col in df.columns:
+            df[col] = df[col].astype(bool)
+    return prepare_jobs(df)
 
 
 def analytics(jobs: pd.DataFrame) -> dict[str, pd.DataFrame]:

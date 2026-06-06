@@ -11,7 +11,7 @@ from zipfile import ZipFile
 
 ZIP_PATH = Path(r"C:\Users\Rui Wang\Downloads\techmap-jobs-dump-2021-09.json.zip")
 OUT = Path("data/job_postings_sample.csv")
-MAX_ROWS = 20000
+MAX_ROWS = 27423
 SCAN_LIMIT = 900000
 random.seed(423)
 

@@ -9,7 +9,7 @@
 3. **Production-aware implementation prompt:** "Create a Streamlit app with a real Kaggle job-posting snapshot, simulated streaming ingestion, deduplication, dense embedding retrieval, multi-stage ranking, feedback learning, explanations, CSV export, analytics, persona benchmarks, and resume generation."  
    Purpose: forced coverage of data, model, serving/UI, and evaluation layers from Lecture 10.
 
-4. **Kaggle data prompt:** "Stream the professor-recommended Techmap jobs zip without extracting the full JSON file, create a 20,000-posting multi-country sample across many fields, normalize schema.org fields, and write a deployable CSV sample with country fields."  
+4. **Kaggle data prompt:** "Stream the professor-recommended Techmap jobs zip without extracting the full JSON file, create a 27,423-posting multi-country sample across many fields, normalize schema.org fields, and write a deployable CSV sample with country fields."  
    Purpose: replaced the narrower MSBA/data sample with a broad real job-posting pool while keeping the project runnable.
 
 5. **Location-aware prompt:** "Make recommendations respect each persona's preferred countries before ranking, then add international personas with diverse country constraints."  
