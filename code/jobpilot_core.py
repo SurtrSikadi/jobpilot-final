@@ -665,11 +665,25 @@ def analytics(jobs: pd.DataFrame) -> dict[str, pd.DataFrame]:
         skill_rows.extend(skills)
     top_skills = pd.Series(skill_rows).value_counts().head(15).reset_index()
     top_skills.columns = ["skill", "count"]
-    salary = jobs.groupby("role_family").agg(
+    group_col = "role_family"
+
+    if group_col not in jobs.columns:
+        if "target_role" in jobs.columns:
+            group_col = "target_role"
+        elif "title" in jobs.columns:
+            group_col = "title"
+        else:
+            jobs = jobs.copy()
+            jobs["role_family"] = "Unknown"
+            group_col = "role_family"
+
+    salary = jobs.groupby(group_col).agg(
         postings=("job_id", "count"),
         median_salary_min=("salary_min", "median"),
         median_salary_max=("salary_max", "median"),
     ).reset_index().sort_values("postings", ascending=False)
+
+    salary = salary.rename(columns={group_col: "role_family"})
     locations = jobs.groupby("location").size().sort_values(ascending=False).head(12).reset_index()
     locations.columns = ["location", "postings"]
     countries = jobs.groupby("country").size().sort_values(ascending=False).head(15).reset_index()
