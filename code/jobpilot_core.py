@@ -343,7 +343,7 @@ def prepare_jobs(df: pd.DataFrame) -> pd.DataFrame:
 
 
 class SimpleEmbeddingModel:
-    def __init__(self, max_features: int = 1800, n_components: int = 96):
+    def __init__(self, max_features: int = 900, n_components: int = 64):
         self.max_features = max_features
         self.n_components = n_components
         self.vocab_: dict[str, int] = {}
@@ -375,9 +375,12 @@ class SimpleEmbeddingModel:
             )[: self.max_features]
             self.vocab_ = {tok: i for i, tok in enumerate(features)}
             n = max(1, len(docs))
-            self.idf_ = np.array([np.log((1 + n) / (1 + docfreq[tok])) + 1 for tok in features])
+            self.idf_ = np.array(
+                [np.log((1 + n) / (1 + docfreq[tok])) + 1 for tok in features],
+                dtype=np.float32,
+            )
 
-        matrix = np.zeros((len(texts), len(self.vocab_)), dtype=float)
+        matrix = np.zeros((len(texts), len(self.vocab_)), dtype=np.float32)
         for row, toks in enumerate(docs):
             for tok in toks:
                 col = self.vocab_.get(tok)
@@ -395,7 +398,9 @@ class SimpleEmbeddingModel:
             return tfidf
         rng = np.random.default_rng(423)
         k = min(self.n_components, tfidf.shape[1])
-        self.components_ = rng.normal(0, 1 / np.sqrt(k), size=(tfidf.shape[1], k))
+        self.components_ = rng.normal(
+            0, 1 / np.sqrt(k), size=(tfidf.shape[1], k)
+        ).astype(np.float32)
         dense = tfidf @ self.components_
         norms = np.linalg.norm(dense, axis=1, keepdims=True)
         return dense / np.where(norms == 0, 1, norms)
@@ -595,8 +600,8 @@ def tailored_resume(profile: Profile, job: pd.Series) -> str:
 
 
 def stream_to_sqlite(csv_path: str | Path, db_path: str | Path, batch_size: int = 75) -> dict[str, int]:
-    jobs = pd.read_csv(csv_path)
     db_path = Path(db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     existing_cols = [
         row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
@@ -619,8 +624,7 @@ def stream_to_sqlite(csv_path: str | Path, db_path: str | Path, batch_size: int 
     def as_bool(value) -> int:
         return int(str(value).strip().lower() in {"true", "1", "yes", "y"})
 
-    for start in range(0, len(jobs), batch_size):
-        batch = jobs.iloc[start:start + batch_size]
+    for batch in pd.read_csv(csv_path, chunksize=batch_size):
         for _, row in batch.iterrows():
             try:
                 conn.execute(
@@ -645,6 +649,7 @@ def stream_to_sqlite(csv_path: str | Path, db_path: str | Path, batch_size: int 
 def ensure_sqlite_store(csv_path: str | Path, db_path: str | Path) -> dict[str, int | str]:
     csv_path = Path(csv_path)
     db_path = Path(db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     expected = sum(1 for _ in csv_path.open("r", encoding="utf-8", errors="ignore")) - 1
     needs_rebuild = not db_path.exists()
     required_cols = {

@@ -3,6 +3,7 @@ from __future__ import annotations
 from html import escape
 from io import BytesIO
 from pathlib import Path
+import tempfile
 
 import pandas as pd
 import streamlit as st
@@ -27,10 +28,10 @@ from jobpilot_core import (
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_PATH = ROOT / "data" / "job_postings_sample.csv"
-DB_PATH = ROOT / "data" / "jobpilot_stream.sqlite"
+DB_PATH = Path(tempfile.gettempdir()) / "jobpilot_stream.sqlite"
 
 
-st.set_page_config(page_title="JobPilot", page_icon="JP", layout="wide")
+st.set_page_config(page_title="JobPilot", page_icon=":briefcase:", layout="wide")
 
 
 def inject_styles():
@@ -97,6 +98,12 @@ def inject_styles():
 
 @st.cache_data(show_spinner=False)
 def cached_jobs():
+    if not DATA_PATH.exists():
+        st.error(
+            "Missing data/job_postings_sample.csv. "
+            "Please upload the packaged data file to the repository before deploying."
+        )
+        st.stop()
     ensure_sqlite_store(DATA_PATH, DB_PATH)
     return load_jobs_from_sqlite(DB_PATH)
 
