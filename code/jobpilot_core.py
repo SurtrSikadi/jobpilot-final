@@ -589,7 +589,7 @@ def stream_to_sqlite(csv_path: str | Path, db_path: str | Path, batch_size: int 
         """
         CREATE TABLE IF NOT EXISTS jobs (
             job_id TEXT PRIMARY KEY,
-            title TEXT, company TEXT, location TEXT, country TEXT, country_code TEXT,
+            title TEXT, role_family TEXT, company TEXT, location TEXT, country TEXT, country_code TEXT,
             salary_min INTEGER, salary_max INTEGER,
             skills TEXT, description TEXT, apply_link TEXT, employment_type TEXT,
             remote INTEGER, sponsors_visa INTEGER, company_size INTEGER, source TEXT
@@ -606,9 +606,9 @@ def stream_to_sqlite(csv_path: str | Path, db_path: str | Path, batch_size: int 
         for _, row in batch.iterrows():
             try:
                 conn.execute(
-                    "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
-                        row.job_id, row.title, row.company, row.location,
+                        row.job_id, row.title, row.role_family, row.company, row.location,
                         getattr(row, "country", ""), getattr(row, "country_code", ""),
                         int(row.salary_min), int(row.salary_max), row.skills, row.description, row.apply_link,
                         row.employment_type, as_bool(row.remote), as_bool(row.sponsors_visa),
@@ -629,13 +629,19 @@ def ensure_sqlite_store(csv_path: str | Path, db_path: str | Path) -> dict[str, 
     db_path = Path(db_path)
     expected = sum(1 for _ in csv_path.open("r", encoding="utf-8", errors="ignore")) - 1
     needs_rebuild = not db_path.exists()
+    required_cols = {
+        "job_id", "title", "role_family", "company", "location", "country", "country_code",
+        "salary_min", "salary_max", "skills", "description", "apply_link",
+        "employment_type", "remote", "sponsors_visa", "company_size", "source",
+    }
     if not needs_rebuild:
         try:
             conn = sqlite3.connect(db_path)
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
             row = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()
             existing = int(row[0]) if row else 0
             conn.close()
-            needs_rebuild = existing != expected
+            needs_rebuild = existing != expected or not required_cols.issubset(cols)
         except sqlite3.Error:
             needs_rebuild = True
 
@@ -665,25 +671,11 @@ def analytics(jobs: pd.DataFrame) -> dict[str, pd.DataFrame]:
         skill_rows.extend(skills)
     top_skills = pd.Series(skill_rows).value_counts().head(15).reset_index()
     top_skills.columns = ["skill", "count"]
-    group_col = "role_family"
-
-    if group_col not in jobs.columns:
-        if "target_role" in jobs.columns:
-            group_col = "target_role"
-        elif "title" in jobs.columns:
-            group_col = "title"
-        else:
-            jobs = jobs.copy()
-            jobs["role_family"] = "Unknown"
-            group_col = "role_family"
-
-    salary = jobs.groupby(group_col).agg(
+    salary = jobs.groupby("role_family").agg(
         postings=("job_id", "count"),
         median_salary_min=("salary_min", "median"),
         median_salary_max=("salary_max", "median"),
     ).reset_index().sort_values("postings", ascending=False)
-
-    salary = salary.rename(columns={group_col: "role_family"})
     locations = jobs.groupby("location").size().sort_values(ascending=False).head(12).reset_index()
     locations.columns = ["location", "postings"]
     countries = jobs.groupby("country").size().sort_values(ascending=False).head(15).reset_index()
