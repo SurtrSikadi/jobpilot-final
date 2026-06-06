@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from html import escape
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from docx import Document
+from pypdf import PdfReader
 
 from jobpilot_core import (
     PERSONAS,
@@ -98,15 +101,39 @@ def cached_jobs():
     return load_jobs_from_sqlite(DB_PATH)
 
 
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner=False, hash_funcs={pd.DataFrame: lambda df: (len(df), tuple(df.columns))})
 def cached_models(jobs_df: pd.DataFrame):
     return fit_embeddings(jobs_df)
+
+
+def extract_resume_text(uploaded_file) -> str:
+    name = uploaded_file.name.lower()
+    if name.endswith(".pdf"):
+        reader = PdfReader(uploaded_file)
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+    if name.endswith(".docx"):
+        doc = Document(BytesIO(uploaded_file.getvalue()))
+        return "\n".join(p.text for p in doc.paragraphs)
+    return uploaded_file.getvalue().decode("utf-8", errors="ignore")
 
 
 def profile_from_inputs() -> Profile:
     persona_label = st.sidebar.selectbox("Persona", list(PERSONAS.keys()))
     base = PERSONAS[persona_label]
-    resume = st.sidebar.text_area("Resume / profile text", value=base.background, height=120)
+    uploaded = st.sidebar.file_uploader(
+        "Upload resume",
+        type=["pdf", "docx", "txt"],
+        help="Optional. Upload PDF, DOCX, or TXT; parsed text can still be edited below.",
+    )
+    parsed_resume = ""
+    if uploaded is not None:
+        try:
+            parsed_resume = extract_resume_text(uploaded)[:20000]
+            st.sidebar.success("Resume parsed")
+        except Exception as exc:
+            st.sidebar.error(f"Resume parsing failed: {exc}")
+    resume_default = parsed_resume or base.background
+    resume = st.sidebar.text_area("Resume / profile text", value=resume_default, height=120)
     skills = st.sidebar.text_input("Skills", value=", ".join(base.skills))
     targets = st.sidebar.text_input("Target roles", value=", ".join(base.target_roles))
     countries = st.sidebar.text_input("Preferred countries", value=", ".join(base.preferred_countries or [base.location]))
@@ -129,6 +156,8 @@ def profile_from_inputs() -> Profile:
 def ensure_feedback_state():
     if "feedback_weights" not in st.session_state:
         st.session_state.feedback_weights = {}
+    if "job_feedback" not in st.session_state:
+        st.session_state.job_feedback = {}
     if "feedback_log" not in st.session_state:
         st.session_state.feedback_log = []
 
@@ -153,65 +182,89 @@ def main():
 
     with tabs[0]:
         top_k = st.slider("Recommendations to show", 5, 40, 15)
-        ranked = rank_jobs(jobs, profile, model, vectors, nn, st.session_state.feedback_weights, top_k=top_k)
-
-        export_cols = ["job_id", "title", "company", "location", "country", "salary_min", "salary_max", "apply_link", "description"]
-        st.download_button(
-            "Download top jobs CSV",
-            ranked[export_cols].to_csv(index=False).encode("utf-8"),
-            file_name="jobpilot_top_jobs.csv",
-            mime="text/csv",
+        ranked = rank_jobs(
+            jobs,
+            profile,
+            model,
+            vectors,
+            nn,
+            st.session_state.feedback_weights,
+            st.session_state.job_feedback,
+            top_k=top_k,
         )
+        if ranked.empty:
+            st.warning("No matching jobs found for the selected country constraints. Try broadening Preferred countries or choosing Global/Any.")
+        else:
+            export_cols = ["job_id", "title", "company", "location", "country", "salary_min", "salary_max", "apply_link", "description"]
+            toolbar_cols = st.columns([1.4, 1, 3])
+            toolbar_cols[0].download_button(
+                "Download top jobs CSV",
+                ranked[export_cols].to_csv(index=False).encode("utf-8"),
+                file_name="jobpilot_top_jobs.csv",
+                mime="text/csv",
+            )
+            if toolbar_cols[1].button("Clear feedback"):
+                st.session_state.feedback_weights = {}
+                st.session_state.job_feedback = {}
+                st.session_state.feedback_log = []
+                st.rerun()
+            toolbar_cols[2].caption(f"Feedback events this session: {len(st.session_state.feedback_log)}")
 
-        for i, job in ranked.iterrows():
-            with st.container(border=True):
-                title = escape(str(job.title))
-                company = escape(str(job.company))
-                location = escape(str(job.location))
-                country = escape(str(job.country))
-                explanation = escape(explain_job(job, profile))
-                st.markdown(
-                    f"<div class='job-card-title'>{i + 1}. {title}</div>",
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    (
-                        "<div class='job-meta'>"
-                        f"{company} - {location} - {country} - "
-                        f"${int(job.salary_min):,}-${int(job.salary_max):,}"
-                        "</div>"
-                    ),
-                    unsafe_allow_html=True,
-                )
-                st.progress(max(0.0, min(1.0, float(job.match_score))), text=f"Match score {job.match_score:.2f}")
-                st.markdown(
-                    f"<div class='job-explain'>{explanation}</div>",
-                    unsafe_allow_html=True,
-                )
-                action_cols = st.columns([1.1, 1, 1, 1, 2.4])
-                action_cols[0].link_button("Apply", job.apply_link)
-                if action_cols[1].button("Accept", key=f"accept-{job.job_id}"):
-                    st.session_state.feedback_weights = update_feedback_weights(st.session_state.feedback_weights, job, "accept")
-                    st.session_state.feedback_log.append((job.job_id, "accept"))
-                    st.rerun()
-                if action_cols[2].button("Skip", key=f"skip-{job.job_id}"):
-                    st.session_state.feedback_weights = update_feedback_weights(st.session_state.feedback_weights, job, "skip")
-                    st.session_state.feedback_log.append((job.job_id, "skip"))
-                    st.rerun()
-                if action_cols[3].button("Reject", key=f"reject-{job.job_id}"):
-                    st.session_state.feedback_weights = update_feedback_weights(st.session_state.feedback_weights, job, "reject")
-                    st.session_state.feedback_log.append((job.job_id, "reject"))
-                    st.rerun()
-                with st.expander("Generate Resume"):
-                    resume = tailored_resume(profile, job)
-                    st.text_area("Tailored resume draft", value=resume, height=260, key=f"resume-{job.job_id}")
-                    st.download_button(
-                        "Download resume draft",
-                        resume.encode("utf-8"),
-                        file_name=f"resume_{profile.name}_{job.job_id}.txt",
-                        mime="text/plain",
-                        key=f"download-{job.job_id}",
+            for i, job in ranked.iterrows():
+                with st.container(border=True):
+                    title = escape(str(job.title))
+                    company = escape(str(job.company))
+                    location = escape(str(job.location))
+                    country = escape(str(job.country))
+                    explanation = escape(explain_job(job, profile))
+                    st.markdown(
+                        f"<div class='job-card-title'>{i + 1}. {title}</div>",
+                        unsafe_allow_html=True,
                     )
+                    st.markdown(
+                        (
+                            "<div class='job-meta'>"
+                            f"{company} - {location} - {country} - "
+                            f"${int(job.salary_min):,}-${int(job.salary_max):,}"
+                            "</div>"
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    st.progress(max(0.0, min(1.0, float(job.match_score))), text=f"Match score {job.match_score:.2f}")
+                    st.markdown(
+                        f"<div class='job-explain'>{explanation}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    current_action = st.session_state.job_feedback.get(str(job.job_id))
+                    if current_action:
+                        st.info(f"Feedback recorded: {current_action.title()}. Ranking has been updated for this session.")
+                    action_cols = st.columns([1.1, 1, 1, 1, 2.4])
+                    action_cols[0].link_button("Apply", job.apply_link)
+                    if action_cols[1].button("Accept", key=f"accept-{job.job_id}"):
+                        st.session_state.feedback_weights = update_feedback_weights(st.session_state.feedback_weights, job, "accept")
+                        st.session_state.job_feedback[str(job.job_id)] = "accept"
+                        st.session_state.feedback_log.append((job.job_id, "accept"))
+                        st.rerun()
+                    if action_cols[2].button("Skip", key=f"skip-{job.job_id}"):
+                        st.session_state.feedback_weights = update_feedback_weights(st.session_state.feedback_weights, job, "skip")
+                        st.session_state.job_feedback[str(job.job_id)] = "skip"
+                        st.session_state.feedback_log.append((job.job_id, "skip"))
+                        st.rerun()
+                    if action_cols[3].button("Reject", key=f"reject-{job.job_id}"):
+                        st.session_state.feedback_weights = update_feedback_weights(st.session_state.feedback_weights, job, "reject")
+                        st.session_state.job_feedback[str(job.job_id)] = "reject"
+                        st.session_state.feedback_log.append((job.job_id, "reject"))
+                        st.rerun()
+                    with st.expander("Generate Resume"):
+                        resume = tailored_resume(profile, job)
+                        st.text_area("Tailored resume draft", value=resume, height=260, key=f"resume-{job.job_id}")
+                        st.download_button(
+                            "Download resume draft",
+                            resume.encode("utf-8"),
+                            file_name=f"resume_{profile.name}_{job.job_id}.txt",
+                            mime="text/plain",
+                            key=f"download-{job.job_id}",
+                        )
 
     with tabs[1]:
         insight = analytics(jobs)

@@ -6,7 +6,7 @@
 2. **Refined project prompt:** "Read the JobPilot assignment and lecture notes, identify required deliverables, then build a runnable prototype that covers all six core capabilities."  
    Purpose: made the output align with the grading rubric instead of producing a generic job-board demo.
 
-3. **Production-aware implementation prompt:** "Create a Streamlit app with a real Kaggle job-posting snapshot, simulated streaming ingestion, deduplication, dense embedding retrieval, multi-stage ranking, feedback learning, explanations, CSV export, analytics, persona benchmarks, and resume generation."  
+3. **Production-aware implementation prompt:** "Create a Streamlit app with a real Kaggle job-posting snapshot, simulated streaming ingestion, deduplication, resume upload parsing, dense embedding retrieval, multi-stage ranking, feedback learning, explanations, CSV export, analytics, persona benchmarks, and resume generation."  
    Purpose: forced coverage of data, model, serving/UI, and evaluation layers from Lecture 10.
 
 4. **Kaggle data prompt:** "Stream the professor-recommended Techmap jobs zip without extracting the full JSON file, create a 27,423-posting multi-country sample across many fields, normalize schema.org fields, and write a deployable CSV sample with country fields."  

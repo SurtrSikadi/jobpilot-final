@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import csv
+import argparse
 import hashlib
 import json
+import os
 import random
 import re
 from pathlib import Path
 from zipfile import ZipFile
 
 
-ZIP_PATH = Path(r"C:\Users\Rui Wang\Downloads\techmap-jobs-dump-2021-09.json.zip")
-OUT = Path("data/job_postings_sample.csv")
+ZIP_PATH = Path(os.environ.get("TECHMAP_JOBS_ZIP", r"C:\Users\Rui Wang\Downloads\techmap-jobs-dump-2021-09.json.zip"))
+OUT = Path(os.environ.get("JOBPILOT_OUT_CSV", "data/job_postings_sample.csv"))
 MAX_ROWS = 27423
 SCAN_LIMIT = 900000
 random.seed(423)
@@ -338,17 +340,17 @@ def make_row(obj: dict, n: int) -> dict | None:
     }
 
 
-def main():
-    tmp_out = OUT.with_suffix(".csv.tmp")
+def main(zip_path: Path = ZIP_PATH, out: Path = OUT):
+    tmp_out = out.with_suffix(".csv.tmp")
     seen = set()
     country_counts = {}
     scanned = 0
-    OUT.parent.mkdir(exist_ok=True)
+    out.parent.mkdir(exist_ok=True)
     fieldnames = None
     collected = 0
     with tmp_out.open("w", newline="", encoding="utf-8") as f:
         writer = None
-        for obj in parse_stream(ZIP_PATH):
+        for obj in parse_stream(zip_path):
             scanned += 1
             row = make_row(obj, scanned)
             if row and row["job_id"] not in seen:
@@ -377,10 +379,14 @@ def main():
     if collected < MAX_ROWS:
         raise RuntimeError(f"Only collected {collected} relevant jobs after scanning {scanned} records")
 
-    tmp_out.replace(OUT)
-    safe_print(f"wrote {collected} rows after scanning {scanned} records to {OUT}")
+    tmp_out.replace(out)
+    safe_print(f"wrote {collected} rows after scanning {scanned} records to {out}")
     safe_print("country_counts=" + str(sorted(country_counts.items(), key=lambda x: x[1], reverse=True)[:30]))
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Build a normalized JobPilot sample from the Techmap/Kaggle jobs zip.")
+    parser.add_argument("--zip", type=Path, default=ZIP_PATH, help="Path to techmap-jobs-dump-2021-09.json.zip")
+    parser.add_argument("--out", type=Path, default=OUT, help="Output CSV path")
+    args = parser.parse_args()
+    main(args.zip, args.out)

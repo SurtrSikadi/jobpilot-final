@@ -26,7 +26,12 @@ SKILL_VOCAB = [
 SENIOR_PATTERNS = re.compile(r"\b(senior|sr\.?|staff|principal|lead)\b", re.I)
 JUNIOR_PATTERNS = re.compile(r"\b(junior|entry level|associate|new grad)\b", re.I)
 CONTRACT_PATTERNS = re.compile(r"\b(contract|contractor|temporary|temp|unpaid)\b", re.I)
-YEARS_PATTERN = re.compile(r"(\d+)\+?\s*(?:years|yrs)", re.I)
+YEARS_PATTERN = re.compile(
+    r"(?:require(?:d|ment)?|minimum|min\.?|at least|experience|exp\.?|"
+    r"qualification(?:s)?|must have|need(?:s|ed)?|looking for)"
+    r"[^.\n]{0,80}?(\d{1,2})\+?\s*(?:years|yrs)\b",
+    re.I,
+)
 COUNTRY_ALIASES = {
     "us": "United States",
     "usa": "United States",
@@ -312,6 +317,7 @@ def extract_skills(text: str) -> list[str]:
 
 def max_years_required(text: str) -> int:
     years = [int(m.group(1)) for m in YEARS_PATTERN.finditer(text or "")]
+    years = [y for y in years if 0 <= y <= 15]
     return max(years) if years else 0
 
 
@@ -457,18 +463,26 @@ def rank_jobs(
     job_vectors: np.ndarray,
     nn,
     feedback_weights: dict[str, float] | None = None,
+    job_feedback: dict[str, str] | None = None,
     top_k: int = 25,
 ) -> pd.DataFrame:
     feedback_weights = feedback_weights or {}
+    job_feedback = job_feedback or {}
     profile_vector = model.transform([profile.text])
     preferred_countries = parse_country_preferences(profile)
     candidate_pool = jobs
     pool_vectors = job_vectors
     if preferred_countries:
         mask = jobs["country"].isin(preferred_countries).to_numpy()
-        if mask.sum() >= max(top_k, 20):
-            candidate_pool = jobs.loc[mask]
-            pool_vectors = job_vectors[mask]
+        candidate_pool = jobs.loc[mask]
+        pool_vectors = job_vectors[mask]
+    result_cols = list(jobs.columns) + [
+        "embedding_score", "skill_overlap", "target_bonus", "location_bonus",
+        "salary_bonus", "feedback_bonus", "direct_feedback_bonus", "feedback_action",
+        "dealbreaker_penalty", "dealbreaker_flags", "match_score",
+    ]
+    if len(candidate_pool) == 0:
+        return pd.DataFrame(columns=result_cols)
     n_neighbors = min(max(250, top_k * 8), len(candidate_pool))
     all_sim = (pool_vectors @ profile_vector.T).ravel()
     candidate_idx = np.argsort(all_sim)[::-1][:n_neighbors]
@@ -490,6 +504,8 @@ def rank_jobs(
             location_bonus += 0.05
         salary_bonus = min(0.08, max(0, (int(job.salary_max) - 90000) / 500000))
         feedback_bonus = sum(feedback_weights.get(skill, 0) for skill in job_skills) / max(1, len(job_skills))
+        action = job_feedback.get(str(job.job_id), "")
+        direct_feedback_bonus = {"accept": 0.22, "skip": -0.16, "reject": -0.45}.get(action, 0.0)
         penalty, flags = _dealbreaker_penalty(job, profile)
         score = (
             0.56 * float(job.embedding_score) +
@@ -498,16 +514,18 @@ def rank_jobs(
             location_bonus +
             salary_bonus +
             feedback_bonus -
-            penalty
+            penalty +
+            direct_feedback_bonus
         )
         if any(t in job.job_text.lower() for t in target_text.split()):
             score += 0.02
-        rows.append((job.job_id, overlap, target_bonus, location_bonus, salary_bonus, feedback_bonus, penalty, flags, score))
+        rows.append((job.job_id, overlap, target_bonus, location_bonus, salary_bonus, feedback_bonus, direct_feedback_bonus, action, penalty, flags, score))
 
     scored = candidates.merge(
         pd.DataFrame(rows, columns=[
             "job_id", "skill_overlap", "target_bonus", "location_bonus", "salary_bonus",
-            "feedback_bonus", "dealbreaker_penalty", "dealbreaker_flags", "match_score"
+            "feedback_bonus", "direct_feedback_bonus", "feedback_action",
+            "dealbreaker_penalty", "dealbreaker_flags", "match_score"
         ]),
         on="job_id",
     )
@@ -687,6 +705,15 @@ def persona_pass_table(jobs: pd.DataFrame, model, vectors, nn) -> pd.DataFrame:
     rows = []
     for persona_name, profile in PERSONAS.items():
         ranked = rank_jobs(jobs, profile, model, vectors, nn, top_k=10)
+        if ranked.empty:
+            rows.append({
+                "persona": profile.name,
+                "countries": ", ".join(profile.preferred_countries or []),
+                "criterion": "No matching jobs in preferred countries",
+                "top10_pass": "PARTIAL",
+                "mean_score": 0.0,
+            })
+            continue
         titles = " ".join(ranked["title"].tolist())
         desc = " ".join(ranked["description"].tolist())
         country_ok = True
@@ -742,6 +769,16 @@ def benchmark(jobs: pd.DataFrame, model, vectors, nn) -> pd.DataFrame:
         keyword["keyword_score"] = keyword["skills_list"].apply(lambda s: len(profile_skills & set(s)) / max(1, len(s)))
         keyword_top = keyword.sort_values("keyword_score", ascending=False).head(10)
         ranked = rank_jobs(jobs, profile, model, vectors, nn, top_k=10)
+        if ranked.empty:
+            rows.append({
+                "persona": profile.name,
+                "keyword_top10_avg_skill_overlap": round(float(keyword_top["skills_list"].apply(lambda s: len(profile_skills & set(s)) / max(1, len(s))).mean()), 3),
+                "multistage_top10_avg_skill_overlap": 0.0,
+                "keyword_dealbreaker_violations": violations(keyword_top, profile),
+                "multistage_dealbreaker_violations": 0,
+                "multistage_avg_score": 0.0,
+            })
+            continue
         rows.append({
             "persona": profile.name,
             "keyword_top10_avg_skill_overlap": round(float(keyword_top["skills_list"].apply(lambda s: len(profile_skills & set(s)) / max(1, len(s))).mean()), 3),
